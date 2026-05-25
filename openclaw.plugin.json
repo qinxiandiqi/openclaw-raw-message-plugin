@@ -1,7 +1,7 @@
 {
   "id": "agent-source-memory",
   "name": "Agent Source Memory",
-  "description": "Add Agent Source Memory tools to OpenClaw.",
+  "description": "Preserve and query agent session messages before compaction",
   "version": "0.1.0",
   "configSchema": {
     "type": "object",
@@ -9,11 +9,10 @@
     "properties": {}
   },
   "activation": {
-    "onStartup": true
+    "onStartup": true,
+    "onCapabilities": ["hook"]
   },
   "contracts": {
-    "tools": [
-      "echo"
-    ]
+    "tools": ["query_agent_messages"]
   }
 }
