@@ -7,8 +7,8 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { parseAgentSessionKey } from "openclaw";
-import { app } from "openclaw";
+import { parseAgentSessionKey } from "openclaw/plugin-sdk/routing";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import type { SnapshotMeta, SessionMessage } from "./types.js";
 
 const PLUGIN_DATA_DIR = "agent-source-memory";
@@ -18,7 +18,7 @@ const SNAPSHOTS_DIR = "snapshots";
  * Get the snapshots directory path for a specific agent
  */
 function getSnapshotDir(agentId: string): string {
-  return path.join(app.dataDir, PLUGIN_DATA_DIR, SNAPSHOTS_DIR, agentId);
+  return path.join(resolveStateDir(), PLUGIN_DATA_DIR, SNAPSHOTS_DIR, agentId);
 }
 
 /**

@@ -31,3 +31,31 @@ export interface SessionMessage {
   content?: string | null;
   timestamp?: number;
 }
+
+/**
+ * Gateway session info from sessions.list RPC
+ */
+export interface GatewaySession {
+  key: string;
+  sessionId: string;
+  updatedAt?: number;
+}
+
+/**
+ * Gateway sessions.list response
+ */
+export interface GatewaySessionsListResult {
+  sessions: GatewaySession[];
+}
+
+/**
+ * Query options for controlling behavior
+ */
+export interface QueryOptions {
+  /** Maximum number of sessions to query (default: 50) */
+  maxSessions?: number;
+  /** Maximum messages per session (default: 200) */
+  maxMessagesPerSession?: number;
+  /** Include inactive sessions in results (default: false) */
+  includeInactive?: boolean;
+}

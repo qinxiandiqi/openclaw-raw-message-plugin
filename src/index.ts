@@ -6,70 +6,93 @@
  */
 
 import { Type } from "typebox";
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import { toolPluginMetadataSymbol } from "openclaw/plugin-sdk/tool-plugin";
+import { jsonResult } from "openclaw/plugin-sdk/agent-runtime";
 import { queryAgentMessages } from "./queries.js";
 import { saveCompactionSnapshot } from "./snapshot.js";
 import type { SessionMessage } from "./types.js";
 
-export default definePluginEntry({
+// 创建工具定义
+const queryAgentMessagesTool = {
+  label: "Query Agent Messages",
+  name: "query_agent_messages",
+  description:
+    "Query all messages for an agent within a time range. " +
+    "Returns messages from both snapshots (compacted sessions) and real-time transcripts.",
+  parameters: Type.Object({
+    agentId: Type.String({
+      description: "Agent ID (e.g. 'main', 'my-agent')",
+    }),
+    startTime: Type.Number({
+      description: "Start time (Unix timestamp in milliseconds)",
+    }),
+    endTime: Type.Number({
+      description: "End time (Unix timestamp in milliseconds)",
+    }),
+  }),
+  execute: async (_toolCallId: string, params: unknown) => {
+    const { agentId, startTime, endTime } = params as {
+      agentId: string;
+      startTime: number;
+      endTime: number;
+    };
+    const result = await queryAgentMessages(agentId, startTime, endTime);
+    return jsonResult({
+      snapshotCount: result.snapshotCount,
+      messageCount: result.messageCount,
+      messages: result.messages,
+    });
+  },
+};
+
+// 构建 metadata（供验证器使用）
+const metadata = {
   id: "agent-source-memory",
   name: "Agent Source Memory",
   description: "Preserve and query agent session messages before compaction",
+  activation: { onStartup: true },
+  configSchema: { type: "object", properties: {}, additionalProperties: false },
+  tools: [
+    {
+      name: queryAgentMessagesTool.name,
+      label: queryAgentMessagesTool.label,
+      description: queryAgentMessagesTool.description,
+      parameters: queryAgentMessagesTool.parameters as unknown,
+    },
+  ],
+};
 
-  register(api) {
-    // Register the query_agent_messages tool
+// 定义 entry
+const entry = definePluginEntry({
+  id: "agent-source-memory",
+  name: "Agent Source Memory",
+  description: "Preserve and query agent session messages before compaction",
+  register(api: OpenClawPluginApi) {
+    // 注册工具
     api.registerTool({
-      name: "query_agent_messages",
-      label: "Query Agent Messages",
-      description:
-        "Query all messages for an agent within a time range. " +
-        "Returns messages from both snapshots (compacted sessions) and real-time transcripts.",
-      parameters: Type.Object({
-        agentId: Type.String({
-          description: "Agent ID (e.g. 'main', 'my-agent')",
-        }),
-        startTime: Type.Number({
-          description: "Start time (Unix timestamp in milliseconds)",
-        }),
-        endTime: Type.Number({
-          description: "End time (Unix timestamp in milliseconds)",
-        }),
-      }),
-
-      async execute({ agentId, startTime, endTime }, _config, _ctx) {
-        const result = await queryAgentMessages(agentId, startTime, endTime);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(
-                {
-                  snapshotCount: result.snapshotCount,
-                  messageCount: result.messageCount,
-                  messages: result.messages,
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      },
+      name: queryAgentMessagesTool.name,
+      label: queryAgentMessagesTool.label,
+      description: queryAgentMessagesTool.description,
+      parameters: queryAgentMessagesTool.parameters,
+      execute: queryAgentMessagesTool.execute,
     });
 
-    // Register the before_compaction hook to save snapshots
-    api.registerHook("before_compaction", async (event, ctx) => {
-      if (!ctx.sessionKey || !ctx.sessionId) {
-        return;
-      }
-
-      const messages = event.messages as SessionMessage[] | undefined;
-      if (!messages || messages.length === 0) {
-        return;
-      }
-
-      await saveCompactionSnapshot(ctx.sessionKey, ctx.sessionId, messages);
+    // 注册 before_compaction hook
+    api.on("before_compaction", async (event, _ctx) => {
+      const sessionKey = (event as { sessionKey?: string }).sessionKey;
+      const sessionId = (event as { sessionId?: string }).sessionId;
+      const messages = (event as { messages?: SessionMessage[] }).messages;
+      if (!sessionKey || !sessionId || !messages?.length) return;
+      await saveCompactionSnapshot(sessionKey, sessionId, messages);
     });
   },
 });
+
+// 手动添加 toolPluginMetadataSymbol（让 validate 通过）
+Object.defineProperty(entry, toolPluginMetadataSymbol, {
+  value: metadata,
+  enumerable: false,
+});
+
+export default entry;

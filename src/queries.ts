@@ -7,18 +7,88 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { app } from "openclaw";
+import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { getSnapshotIndex } from "./snapshot.js";
-import type { SnapshotMeta, QueryResult, SessionMessage } from "./types.js";
+import type { SnapshotMeta, QueryResult, QueryOptions, SessionMessage, GatewaySession } from "./types.js";
 
 const PLUGIN_DATA_DIR = "agent-source-memory";
 const SNAPSHOTS_DIR = "snapshots";
 
+const DEFAULT_MAX_SESSIONS = 50;
+const DEFAULT_MAX_MESSAGES_PER_SESSION = 200;
+const MAX_CONCURRENT_READS = 3;
+
+type GatewayRpcPayload = {
+  sessions?: GatewaySession[];
+  messages?: SessionMessage[];
+};
+
+type GatewayRpcResult = {
+  ok?: boolean;
+  payload?: GatewayRpcPayload;
+};
+
 /**
- * Get the snapshots directory for an agent
+ * From gateway, get the active session list for the specified agent.
  */
-function getSnapshotDir(agentId: string): string {
-  return path.join(app.dataDir, PLUGIN_DATA_DIR, SNAPSHOTS_DIR, agentId);
+async function listSessionsFromGateway(
+  agentId: string,
+  limit: number = DEFAULT_MAX_SESSIONS
+): Promise<GatewaySession[]> {
+  try {
+    const result = await callGatewayFromCli(
+      "sessions.list",
+      { json: true, timeout: "10000" },
+      { agentId, limit, includeLastMessage: false },
+      { progress: false }
+    ) as GatewayRpcResult;
+    if (!result?.ok || !result.payload?.sessions) {
+      return [];
+    }
+    return result.payload.sessions;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Load messages from a single session via gateway.
+ */
+async function loadSessionMessagesFromGateway(
+  sessionKey: string,
+  limit: number = DEFAULT_MAX_MESSAGES_PER_SESSION
+): Promise<SessionMessage[]> {
+  try {
+    const result = await callGatewayFromCli(
+      "chat.history",
+      { json: true, timeout: "30000" },
+      { sessionKey, limit },
+      { progress: false }
+    ) as GatewayRpcResult;
+    if (!result?.ok || !result.payload?.messages) {
+      return [];
+    }
+    return result.payload.messages;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Check if a session might contain relevant messages based on updatedAt.
+ * Allows 24h buffer before the time range to catch sessions that started earlier.
+ */
+function isSessionPotentiallyRelevant(
+  session: GatewaySession,
+  startTime: number,
+  endTime: number
+): boolean {
+  if (session.updatedAt) {
+    const buffer = 24 * 60 * 60 * 1000; // 24 hours
+    return session.updatedAt >= startTime - buffer && session.updatedAt <= endTime;
+  }
+  return true;
 }
 
 /**
@@ -96,8 +166,6 @@ export async function queryAgentMessages(
   const matchedSnapshots: SnapshotMeta[] = [];
 
   // 1. Query from snapshots (compacted historical sessions)
-  const snapshotDir = getSnapshotDir(agentId);
-
   try {
     const index = await getSnapshotIndex(agentId);
 
@@ -118,11 +186,28 @@ export async function queryAgentMessages(
   }
 
   // 2. Query from real-time transcripts (current uncompacted sessions)
-  // TODO: Implement real-time transcript reading via gatewayRpc
-  // This requires:
-  // 1. Get current session list via gatewayRpc("sessions.list", { agentId })
-  // 2. Read each session's transcript file
-  // 3. Filter by time range and add to messages
+  try {
+    const sessions = await listSessionsFromGateway(agentId, DEFAULT_MAX_SESSIONS);
+
+    // Filter to potentially relevant sessions
+    const relevantSessions = sessions.filter((s) =>
+      isSessionPotentiallyRelevant(s, startTime, endTime)
+    );
+
+    // Read messages in batches with concurrency limit
+    for (let i = 0; i < relevantSessions.length; i += MAX_CONCURRENT_READS) {
+      const batch = relevantSessions.slice(i, i + MAX_CONCURRENT_READS);
+      const results = await Promise.all(
+        batch.map((s) => loadSessionMessagesFromGateway(s.key, DEFAULT_MAX_MESSAGES_PER_SESSION))
+      );
+      for (const sessionMessages of results) {
+        const filtered = filterMessagesByTimeRange(sessionMessages, startTime, endTime);
+        messages.push(...filtered);
+      }
+    }
+  } catch {
+    // Gateway unavailable or other error - skip real-time query
+  }
 
   // 3. Deduplicate and sort
   const uniqueMessages = dedupeAndSort(messages);
@@ -139,7 +224,7 @@ export async function queryAgentMessages(
  * List all agents that have snapshots
  */
 export async function listAgentsWithSnapshots(): Promise<string[]> {
-  const snapshotsRoot = path.join(app.dataDir, PLUGIN_DATA_DIR, SNAPSHOTS_DIR);
+  const snapshotsRoot = path.join(resolveStateDir(), PLUGIN_DATA_DIR, SNAPSHOTS_DIR);
 
   try {
     const entries = await fs.readdir(snapshotsRoot, { withFileTypes: true });

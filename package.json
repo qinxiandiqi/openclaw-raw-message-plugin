@@ -5,8 +5,8 @@
   "private": true,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "plugin:build": "npm run build && openclaw plugins build --entry ./dist/index.js",
-    "plugin:validate": "npm run build && openclaw plugins validate --entry ./dist/index.js",
+    "plugin:build": "pnpm run build && openclaw plugins build --entry ./dist/index.js",
+    "plugin:validate": "pnpm run build && openclaw plugins validate --entry ./dist/index.js",
     "test": "vitest run"
   },
   "files": [

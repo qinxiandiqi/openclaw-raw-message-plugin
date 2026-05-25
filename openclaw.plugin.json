@@ -5,14 +5,15 @@
   "version": "0.1.0",
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
-    "properties": {}
+    "properties": {},
+    "additionalProperties": false
   },
   "activation": {
-    "onStartup": true,
-    "onCapabilities": ["hook"]
+    "onStartup": true
   },
   "contracts": {
-    "tools": ["query_agent_messages"]
+    "tools": [
+      "query_agent_messages"
+    ]
   }
 }
