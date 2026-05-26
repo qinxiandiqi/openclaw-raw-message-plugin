@@ -7,7 +7,6 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { parseAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import type { SnapshotMeta, SessionMessage } from "./types.js";
 
@@ -69,19 +68,17 @@ async function updateSnapshotIndex(agentId: string, meta: SnapshotMeta): Promise
  * Save complete session messages to a snapshot before compaction.
  *
  * @param sessionKey - The session key (e.g., "agent:main:main")
- * @param sessionIdOrFilepath - The session ID or original filepath (for migration)
+ * @param sessionId - The session ID
+ * @param agentId - The agent ID (from hook context)
  * @param messages - Array of session messages to preserve
  * @returns The path to the created snapshot file
  */
 export async function saveCompactionSnapshot(
   sessionKey: string,
-  sessionIdOrFilepath: string,
+  sessionId: string,
+  agentId: string,
   messages: SessionMessage[]
 ): Promise<string> {
-  // Parse agentId from sessionKey
-  const parsed = parseAgentSessionKey(sessionKey);
-  const agentId = parsed?.agentId ?? "unknown";
-
   // Ensure directory exists
   const snapshotDir = getSnapshotDir(agentId);
   await fs.mkdir(snapshotDir, { recursive: true });
@@ -89,18 +86,9 @@ export async function saveCompactionSnapshot(
   // Extract time range from messages
   const { startTime, endTime } = extractTimeRange(messages);
 
-  // Determine filepath: check if it's an existing file path from sessions dir
-  let filepath: string;
-  const isMigration = sessionIdOrFilepath.includes("/sessions/");
-
-  if (isMigration) {
-    // Migration case: derive filename from the source file
-    const filename = path.basename(sessionIdOrFilepath);
-    filepath = path.join(snapshotDir, filename);
-  } else {
-    // Hook case: generate new snapshot filename with timestamp
-    filepath = path.join(snapshotDir, `${sessionIdOrFilepath}.${Date.now()}.jsonl`);
-  }
+  // Generate snapshot filename with timestamp to avoid collisions
+  const filename = `${sessionId}.${Date.now()}.jsonl`;
+  const filepath = path.join(snapshotDir, filename);
 
   // Write messages as JSONL
   const lines = messages.map((m) => JSON.stringify(m));
@@ -109,7 +97,7 @@ export async function saveCompactionSnapshot(
   // Update index
   const meta: SnapshotMeta = {
     sessionKey,
-    sessionId: isMigration ? path.basename(sessionIdOrFilepath) : sessionIdOrFilepath,
+    sessionId,
     filepath,
     startTime,
     endTime,

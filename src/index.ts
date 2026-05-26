@@ -92,12 +92,14 @@ const entry = definePluginEntry({
     });
 
     // 注册 before_compaction hook
-    api.on("before_compaction", async (event, _ctx) => {
-      const sessionKey = (event as { sessionKey?: string }).sessionKey;
-      const sessionId = (event as { sessionId?: string }).sessionId;
+    api.on("before_compaction", async (event, ctx) => {
+      const agentId = (ctx as { agentId?: string }).agentId;
+      const sessionKey = (ctx as { sessionKey?: string }).sessionKey;
+      const sessionId = (ctx as { sessionId?: string }).sessionId;
       const messages = (event as { messages?: SessionMessage[] }).messages;
       if (!sessionKey || !sessionId || !messages?.length) return;
-      await saveCompactionSnapshot(sessionKey, sessionId, messages);
+      if (!agentId) return;
+      await saveCompactionSnapshot(sessionKey, sessionId, agentId, messages);
     });
   },
 });

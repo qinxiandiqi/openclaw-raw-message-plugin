@@ -97,10 +97,14 @@ export async function migrateAgentSessions(agentId: string): Promise<number> {
 
       if (messages.length === 0) continue;
 
+      // 从文件名提取 sessionId（去掉 .jsonl 及后续的变体后缀）
+      // 例如: "abc123.jsonl.deleted.12345" -> "abc123"
+      const sessionId = entry.name.replace(/\.jsonl(\..+)?$/, "");
+
       // 构建 sessionKey（假设格式 agent:{agentId}:main）
       const sessionKey = `agent:${agentId}:main`;
 
-      await saveCompactionSnapshot(sessionKey, filepath, messages);
+      await saveCompactionSnapshot(sessionKey, sessionId, agentId, messages);
       migratedCount++;
     }
   } catch {
