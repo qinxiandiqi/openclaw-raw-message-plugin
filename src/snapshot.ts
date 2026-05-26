@@ -69,13 +69,13 @@ async function updateSnapshotIndex(agentId: string, meta: SnapshotMeta): Promise
  * Save complete session messages to a snapshot before compaction.
  *
  * @param sessionKey - The session key (e.g., "agent:main:main")
- * @param sessionId - The session ID
+ * @param sessionIdOrFilepath - The session ID or original filepath (for migration)
  * @param messages - Array of session messages to preserve
  * @returns The path to the created snapshot file
  */
 export async function saveCompactionSnapshot(
   sessionKey: string,
-  sessionId: string,
+  sessionIdOrFilepath: string,
   messages: SessionMessage[]
 ): Promise<string> {
   // Parse agentId from sessionKey
@@ -89,9 +89,18 @@ export async function saveCompactionSnapshot(
   // Extract time range from messages
   const { startTime, endTime } = extractTimeRange(messages);
 
-  // Generate snapshot filename: {sessionId}.{timestamp}.jsonl
-  const filename = `${sessionId}.${Date.now()}.jsonl`;
-  const filepath = path.join(snapshotDir, filename);
+  // Determine filepath: check if it's an existing file path from sessions dir
+  let filepath: string;
+  const isMigration = sessionIdOrFilepath.includes("/sessions/");
+
+  if (isMigration) {
+    // Migration case: derive filename from the source file
+    const filename = path.basename(sessionIdOrFilepath);
+    filepath = path.join(snapshotDir, filename);
+  } else {
+    // Hook case: generate new snapshot filename with timestamp
+    filepath = path.join(snapshotDir, `${sessionIdOrFilepath}.${Date.now()}.jsonl`);
+  }
 
   // Write messages as JSONL
   const lines = messages.map((m) => JSON.stringify(m));
@@ -100,7 +109,7 @@ export async function saveCompactionSnapshot(
   // Update index
   const meta: SnapshotMeta = {
     sessionKey,
-    sessionId,
+    sessionId: isMigration ? path.basename(sessionIdOrFilepath) : sessionIdOrFilepath,
     filepath,
     startTime,
     endTime,

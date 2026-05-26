@@ -11,6 +11,7 @@ import { toolPluginMetadataSymbol } from "openclaw/plugin-sdk/tool-plugin";
 import { jsonResult } from "openclaw/plugin-sdk/agent-runtime";
 import { queryAgentMessages } from "./queries.js";
 import { saveCompactionSnapshot } from "./snapshot.js";
+import { migrateExistingSessions } from "./migrate.js";
 import type { SessionMessage } from "./types.js";
 
 // 创建工具定义
@@ -69,6 +70,18 @@ const entry = definePluginEntry({
   name: "Agent Source Memory",
   description: "Preserve and query agent session messages before compaction",
   register(api: OpenClawPluginApi) {
+    // 网关启动时执行增量迁移（收录所有 agent 的已存在 session 文件）
+    api.on("gateway_start", async () => {
+      try {
+        const count = await migrateExistingSessions();
+        if (count > 0) {
+          console.log(`[agent-source-memory] Migrated ${count} existing session files`);
+        }
+      } catch (err) {
+        console.error("[agent-source-memory] Migration failed:", err);
+      }
+    });
+
     // 注册工具
     api.registerTool({
       name: queryAgentMessagesTool.name,
