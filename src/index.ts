@@ -1,26 +1,29 @@
 /**
- * Agent Source Memory Plugin
+ * Agent Source Memory Plugin (SQLite-based)
  *
- * OpenClaw plugin that preserves session messages before compaction
- * and provides tools to query agent messages within a time range.
+ * Captures agent session messages via onSessionTranscriptUpdate events
+ * (post-write, with entryId for cross-path dedup) and provides
+ * time-range query via SQLite.
  */
 
 import { Type } from "typebox";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { toolPluginMetadataSymbol } from "openclaw/plugin-sdk/tool-plugin";
+import { onSessionTranscriptUpdate } from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
+import { parseAgentSessionKey } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
 import { jsonResult } from "openclaw/plugin-sdk/agent-runtime";
 import { queryAgentMessages } from "./queries.js";
-import { saveCompactionSnapshot } from "./snapshot.js";
+import { initDb, insertCapturedMessage, finalizeSession, closeDb, resolveDbPath } from "./db.js";
 import { migrateExistingSessions } from "./migrate.js";
-import type { SessionMessage } from "./types.js";
+import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+import path from "node:path";
 
-// 创建工具定义
 const queryAgentMessagesTool = {
   label: "Query Agent Messages",
   name: "query_agent_messages",
   description:
     "Query all messages for an agent within a time range. " +
-    "Returns messages from both snapshots (compacted sessions) and real-time transcripts.",
+    "Returns messages captured in real-time from all sessions.",
   parameters: Type.Object({
     agentId: Type.String({
       description: "Agent ID (e.g. 'main', 'my-agent')",
@@ -40,18 +43,17 @@ const queryAgentMessagesTool = {
     };
     const result = await queryAgentMessages(agentId, startTime, endTime);
     return jsonResult({
-      snapshotCount: result.snapshotCount,
+      sessionCount: result.sessionCount,
       messageCount: result.messageCount,
       messages: result.messages,
     });
   },
 };
 
-// 构建 metadata（供验证器使用）
 const metadata = {
   id: "agent-source-memory",
   name: "Agent Source Memory",
-  description: "Preserve and query agent session messages before compaction",
+  description: "Capture and query agent session messages in real-time",
   activation: { onStartup: true },
   configSchema: { type: "object", properties: {}, additionalProperties: false },
   tools: [
@@ -64,25 +66,54 @@ const metadata = {
   ],
 };
 
-// 定义 entry
+function extractAgentIdFromSessionFile(sessionFile: string): string {
+  const stateDir = resolveStateDir();
+  const agentsDir = path.join(stateDir, "agents");
+  const relative = path.relative(agentsDir, sessionFile);
+  return relative.split(path.sep)[0] || "main";
+}
+
+let unsubscribe: (() => void) | null = null;
+
 const entry = definePluginEntry({
   id: "agent-source-memory",
   name: "Agent Source Memory",
-  description: "Preserve and query agent session messages before compaction",
+  description: "Capture and query agent session messages in real-time",
   register(api: OpenClawPluginApi) {
-    // 网关启动时执行增量迁移（收录所有 agent 的已存在 session 文件）
+    // Initialize DB and register listener on gateway start
     api.on("gateway_start", async () => {
       try {
+        initDb(resolveDbPath());
+
+        // Register transcript update listener for real-time capture
+        unsubscribe = onSessionTranscriptUpdate((update) => {
+          if (!update.messageId || !update.sessionKey || update.message === undefined) return;
+
+          const role = (update.message as { role?: string }).role ?? "unknown";
+          const parsed = parseAgentSessionKey(update.sessionKey);
+          const agentId = parsed?.agentId ?? extractAgentIdFromSessionFile(update.sessionFile);
+
+          insertCapturedMessage(
+            agentId,
+            update.sessionKey,
+            update.messageId,
+            Date.now(),
+            role,
+            update.message,
+          );
+        });
+
+        // Migrate existing sessions (duplicates skipped via INSERT OR IGNORE on entryId)
         const count = await migrateExistingSessions();
         if (count > 0) {
-          console.log(`[agent-source-memory] Migrated ${count} existing session files`);
+          console.log(`[agent-source-memory] Migrated ${count} session files`);
         }
       } catch (err) {
-        console.error("[agent-source-memory] Migration failed:", err);
+        console.error("[agent-source-memory] Init/migration failed:", err);
       }
     });
 
-    // 注册工具
+    // Register tool
     api.registerTool({
       name: queryAgentMessagesTool.name,
       label: queryAgentMessagesTool.label,
@@ -91,20 +122,23 @@ const entry = definePluginEntry({
       execute: queryAgentMessagesTool.execute,
     });
 
-    // 注册 before_compaction hook
-    api.on("before_compaction", async (event, ctx) => {
-      const agentId = (ctx as { agentId?: string }).agentId;
-      const sessionKey = (ctx as { sessionKey?: string }).sessionKey;
-      const sessionId = (ctx as { sessionId?: string }).sessionId;
-      const messages = (event as { messages?: SessionMessage[] }).messages;
-      if (!sessionKey || !sessionId || !messages?.length) return;
-      if (!agentId) return;
-      await saveCompactionSnapshot(sessionKey, sessionId, agentId, messages);
+    // Session lifecycle: mark session as finalized
+    api.on("session_end", async (event, ctx) => {
+      const sessionKey = event.sessionKey ?? ctx.sessionKey;
+      finalizeSession(ctx.agentId ?? "main", sessionKey, event.reason ?? "unknown");
+    });
+
+    // Graceful shutdown
+    api.on("gateway_stop", async () => {
+      if (unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+      }
+      closeDb();
     });
   },
 });
 
-// 手动添加 toolPluginMetadataSymbol（让 validate 通过）
 Object.defineProperty(entry, toolPluginMetadataSymbol, {
   value: metadata,
   enumerable: false,

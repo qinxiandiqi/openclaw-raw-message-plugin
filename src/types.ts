@@ -1,61 +1,27 @@
 /**
- * Type definitions for agent-source-memory plugin
+ * Type definitions for agent-source-memory plugin (SQLite-based)
  */
 
-export interface SnapshotMeta {
-  sessionKey: string;
+export interface CapturedMessage {
+  ts: number;
+  role: string;
+  msg: unknown;
+  entryId: string;
+}
+
+export interface SessionIndexEntry {
+  agentId: string;
   sessionId: string;
-  filepath: string;
-  startTime: number;
-  endTime: number;
-  createdAt: number;
+  sessionKey: string | null;
+  startTime: number | null;
+  endTime: number | null;
+  messageCount: number;
+  finalized: boolean;
+  endReason: string | null;
 }
 
 export interface QueryResult {
-  snapshots: SnapshotMeta[];
-  messages: unknown[];
   messageCount: number;
-  snapshotCount: number;
-}
-
-export interface QueryParams {
-  agentId: string;
-  startTime: number;
-  endTime: number;
-}
-
-export interface SessionMessage {
-  id?: string;
-  parentId?: string | null;
-  role?: string;
-  content?: string | null;
-  timestamp?: number;
-}
-
-/**
- * Gateway session info from sessions.list RPC
- */
-export interface GatewaySession {
-  key: string;
-  sessionId: string;
-  updatedAt?: number;
-}
-
-/**
- * Gateway sessions.list response
- */
-export interface GatewaySessionsListResult {
-  sessions: GatewaySession[];
-}
-
-/**
- * Query options for controlling behavior
- */
-export interface QueryOptions {
-  /** Maximum number of sessions to query (default: 50) */
-  maxSessions?: number;
-  /** Maximum messages per session (default: 200) */
-  maxMessagesPerSession?: number;
-  /** Include inactive sessions in results (default: false) */
-  includeInactive?: boolean;
+  sessionCount: number;
+  messages: CapturedMessage[];
 }

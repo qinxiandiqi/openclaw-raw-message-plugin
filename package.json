@@ -18,9 +18,11 @@
     "openclaw": ">=2026.5.17"
   },
   "dependencies": {
+    "better-sqlite3": "^12.10.0",
     "typebox": "^1.1.38"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "openclaw": "latest",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
@@ -28,6 +30,11 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
+    ]
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
     ]
   }
 }
