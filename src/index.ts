@@ -1,16 +1,13 @@
 /**
  * Agent Source Memory Plugin (SQLite-based)
  *
- * Captures agent session messages via onSessionTranscriptUpdate events
- * (post-write, with entryId for cross-path dedup) and provides
- * time-range query via SQLite.
+ * Captures agent session messages via api.runtime.events.onSessionTranscriptUpdate
+ * and provides time-range query via SQLite.
  */
 
 import { Type } from "typebox";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { toolPluginMetadataSymbol } from "openclaw/plugin-sdk/tool-plugin";
-import { onSessionTranscriptUpdate } from "openclaw/plugin-sdk/memory-core-host-engine-foundation";
-import { parseAgentSessionKey } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
 import { jsonResult } from "openclaw/plugin-sdk/agent-runtime";
 import { queryAgentMessages } from "./queries.js";
 import { initDb, insertCapturedMessage, finalizeSession, closeDb, resolveDbPath } from "./db.js";
@@ -85,13 +82,16 @@ const entry = definePluginEntry({
       try {
         initDb(resolveDbPath());
 
-        // Register transcript update listener for real-time capture
-        unsubscribe = onSessionTranscriptUpdate((update) => {
-          if (!update.messageId || !update.sessionKey || update.message === undefined) return;
+        // Use api.runtime.events — the correct injection path that shares
+        // the same module instance as internal emitSessionTranscriptUpdate.
+        unsubscribe = api.runtime.events.onSessionTranscriptUpdate((update) => {
+          if (!update.messageId || !update.sessionKey || update.message === undefined) {
+            return;
+          }
 
+          const agentId = (update as { agentId?: string }).agentId
+            ?? extractAgentIdFromSessionFile(update.sessionFile);
           const role = (update.message as { role?: string }).role ?? "unknown";
-          const parsed = parseAgentSessionKey(update.sessionKey);
-          const agentId = parsed?.agentId ?? extractAgentIdFromSessionFile(update.sessionFile);
 
           insertCapturedMessage(
             agentId,

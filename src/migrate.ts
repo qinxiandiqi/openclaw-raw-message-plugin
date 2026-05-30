@@ -71,14 +71,16 @@ async function migrateAgentSessions(agentId: string): Promise<number> {
 
     for (const entry of entries) {
       if (!entry.isFile()) continue;
-      // Only process plain .jsonl files (not .jsonl.deleted.*, .jsonl.reset.*, etc.)
-      if (!entry.name.endsWith(".jsonl") || entry.name.includes(".jsonl.")) continue;
+      // Include all .jsonl variants: plain, .reset.*, .deleted.*, .checkpoint.*
+      if (!entry.name.endsWith(".jsonl") && !entry.name.includes(".jsonl.")) continue;
+      if (!entry.name.endsWith(".jsonl") && !entry.name.match(/\.jsonl\.(reset|deleted|checkpoint)\./)) continue;
 
       const filepath = path.join(sessionsDir, entry.name);
       const messages = await extractMessagesFromSessionFile(filepath);
       if (messages.length === 0) continue;
 
-      const sessionId = entry.name.replace(/\.jsonl$/, "");
+      // Extract session ID from the base name before .jsonl or .jsonl.xxx
+      const sessionId = entry.name.replace(/\.jsonl(\..*)?$/, "");
       const sessionKey = `agent:${agentId}:${sessionId}`;
 
       const count = batchInsert(agentId, sessionKey, messages);
