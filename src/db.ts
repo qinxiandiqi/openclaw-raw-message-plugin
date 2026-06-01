@@ -142,14 +142,14 @@ export function queryMessages(
   agentId: string,
   startTime: number,
   endTime: number,
-): { messages: Array<{ ts: number; role: string; msg: unknown }>; sessionCount: number } {
+): { messages: Array<{ entryId: string; ts: number; role: string; msg: unknown }>; sessionCount: number } {
   if (!db) return { messages: [], sessionCount: 0 };
 
   const rows = db
     .prepare(
-      "SELECT ts, role, msg FROM messages WHERE agentId=? AND ts BETWEEN ? AND ? ORDER BY ts",
+      "SELECT entryId, ts, role, msg FROM messages WHERE agentId=? AND ts BETWEEN ? AND ? ORDER BY ts",
     )
-    .all(agentId, startTime, endTime) as Array<{ ts: number; role: string; msg: string }>;
+    .all(agentId, startTime, endTime) as Array<{ entryId: string; ts: number; role: string; msg: string }>;
 
   const sessionKeys = new Set(
     (
@@ -162,7 +162,7 @@ export function queryMessages(
   );
 
   return {
-    messages: rows.map((r) => ({ ts: r.ts, role: r.role, msg: JSON.parse(r.msg) })),
+    messages: rows.map((r) => ({ entryId: r.entryId, ts: r.ts, role: r.role, msg: JSON.parse(r.msg) })),
     sessionCount: sessionKeys.size,
   };
 }

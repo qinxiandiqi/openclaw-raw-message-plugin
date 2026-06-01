@@ -13,7 +13,8 @@
   },
   "contracts": {
     "tools": [
-      "query_agent_messages"
+      "query_agent_messages",
+      "query_agent_messages_to_jsonl"
     ]
   }
 }
