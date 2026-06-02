@@ -12,6 +12,7 @@ import { jsonResult } from "openclaw/plugin-sdk/agent-runtime";
 import { queryAgentMessages } from "./queries.js";
 import { initDb, insertCapturedMessage, finalizeSession, closeDb, resolveDbPath } from "./db.js";
 import { migrateExistingSessions } from "./migrate.js";
+import { stripCheckpointSuffix } from "./transcript-filenames.js";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import path from "node:path";
 import fs from "node:fs/promises";
@@ -223,9 +224,19 @@ const entry = definePluginEntry({
           const role = (update.message as { role?: string }).role ?? "unknown";
           const ts = resolveMessageTimestamp(update.message) ?? Date.now();
 
+          // Defensive: OpenClaw's emitter currently always sends the base
+          // sessionKey (see openclaw/src/sessions/transcript-events.ts — all
+          // call sites pass the base key, never a `.checkpoint.<uuid>` form).
+          // Strip the suffix anyway so a future emitter change or a sibling
+          // plugin that re-emits with a checkpoint key doesn't bypass
+          // UNIQUE(agentId, sessionKey, entryId). See openclaw/src/gateway/
+          // session-compaction-checkpoints.ts:498 for the canonical pattern
+          // (checkpoints are stored under the base canonicalKey).
+          const sessionKey = stripCheckpointSuffix(update.sessionKey);
+
           insertCapturedMessage(
             agentId,
-            update.sessionKey,
+            sessionKey,
             update.messageId,
             ts,
             role,

@@ -9,6 +9,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import { batchInsert } from "./db.js";
+import { normalizeSessionTranscriptFileName } from "./transcript-filenames.js";
 
 interface ExtractedMessage {
   entryId: string;
@@ -71,17 +72,20 @@ async function migrateAgentSessions(agentId: string): Promise<number> {
 
     for (const entry of entries) {
       if (!entry.isFile()) continue;
-      // Include all .jsonl variants: plain, .reset.*, .deleted.*, .checkpoint.*
-      if (!entry.name.endsWith(".jsonl") && !entry.name.includes(".jsonl.")) continue;
-      if (!entry.name.endsWith(".jsonl") && !entry.name.match(/\.jsonl\.(reset|deleted|checkpoint)\./)) continue;
+
+      // Normalize filename to base sessionId. Checkpoint (.checkpoint.<uuid>.jsonl)
+      // and archive (.jsonl.reset.<iso> / .jsonl.deleted.<ts> / .jsonl.bak-<n>)
+      // variants all collapse to the same base sessionKey so UNIQUE(agentId,
+      // sessionKey, entryId) actually dedupes across them. Returns null for
+      // trajectory / pointer / temp / store files — those are not session
+      // transcripts and must be skipped.
+      const sessionId = normalizeSessionTranscriptFileName(entry.name);
+      if (sessionId === null) continue;
+      const sessionKey = `agent:${agentId}:${sessionId}`;
 
       const filepath = path.join(sessionsDir, entry.name);
       const messages = await extractMessagesFromSessionFile(filepath);
       if (messages.length === 0) continue;
-
-      // Extract session ID from the base name before .jsonl or .jsonl.xxx
-      const sessionId = entry.name.replace(/\.jsonl(\..*)?$/, "");
-      const sessionKey = `agent:${agentId}:${sessionId}`;
 
       const count = batchInsert(agentId, sessionKey, messages);
       if (count > 0) migratedCount++;
