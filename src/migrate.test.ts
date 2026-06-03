@@ -1,18 +1,18 @@
 /**
- * Regression tests for migrate.ts sessionKey normalization.
+ * Regression tests for migrate.ts sessionKey normalization and sessions.json lookup.
  *
  * These tests guard against the bug where checkpoint / reset / deleted
  * session-file variants were each treated as independent sessions,
  * causing the same entryIds to be written under multiple sessionKeys
- * and bypassing UNIQUE(agentId, sessionKey, entryId).
+ * and bypassing UNIQUE(agentId, entryId).
  */
 
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { initDb, queryMessages, closeDb } from "./db.js";
-import { migrateExistingSessions } from "./migrate.js";
+import { initDb, queryMessages, closeDb, insertCapturedMessage } from "./db.js";
+import { migrateExistingSessions, buildAllAgentSessionKeyMaps } from "./migrate.js";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-source-memory-migrate-"));
 const originalStateDir = process.env.OPENCLAW_STATE_DIR;
@@ -21,6 +21,12 @@ function writeSessionFile(agentId: string, filename: string, lines: string[]): v
   const dir = path.join(tmpDir, "agents", agentId, "sessions");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, filename), lines.join("\n") + "\n", "utf-8");
+}
+
+function writeSessionsJson(agentId: string, data: Record<string, unknown>): void {
+  const dir = path.join(tmpDir, "agents", agentId, "sessions");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "sessions.json"), JSON.stringify(data, null, 2), "utf-8");
 }
 
 function makeLine(id: string, role: "user" | "assistant" | "toolResult", text: string): string {
@@ -32,24 +38,23 @@ function makeLine(id: string, role: "user" | "assistant" | "toolResult", text: s
   });
 }
 
+// Single shared lifecycle for all describe blocks in this file.
+beforeAll(() => {
+  process.env.OPENCLAW_STATE_DIR = tmpDir;
+  initDb();
+});
+
+afterAll(() => {
+  closeDb();
+  if (originalStateDir === undefined) {
+    delete process.env.OPENCLAW_STATE_DIR;
+  } else {
+    process.env.OPENCLAW_STATE_DIR = originalStateDir;
+  }
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
 describe("migrate", () => {
-  beforeAll(() => {
-    process.env.OPENCLAW_STATE_DIR = tmpDir;
-    // initDb reads resolveDbPath() which uses resolveStateDir() — it will
-    // create the DB at $OPENCLAW_STATE_DIR/agent-source-memory/source-memory.db
-    initDb();
-  });
-
-  afterAll(() => {
-    closeDb();
-    if (originalStateDir === undefined) {
-      delete process.env.OPENCLAW_STATE_DIR;
-    } else {
-      process.env.OPENCLAW_STATE_DIR = originalStateDir;
-    }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
   it("imports a plain session file under the base sessionKey", async () => {
     const baseId = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
     writeSessionFile(
@@ -151,5 +156,122 @@ describe("migrate", () => {
 
     const result = queryMessages("test-pointer", 0, Date.now() + 1000);
     expect(result.messages.length).toBe(0);
+  });
+});
+
+describe("sessions.json reverse lookup", () => {
+  it("resolves sessionId to logical sessionKey via sessions.json", async () => {
+    const agentId = "test-lookup";
+    const sessionId = "aaaa1111-2222-3333-4444-aaaa11112222";
+    const logicalKey = `agent:${agentId}:feishu:direct:ou_test123`;
+
+    writeSessionsJson(agentId, {
+      [logicalKey]: { sessionId, usageFamilySessionIds: [] },
+    });
+
+    writeSessionFile(
+      agentId,
+      `${sessionId}.jsonl`,
+      [makeLine("lk1", "user", "lookup test")],
+    );
+
+    await migrateExistingSessions();
+
+    const result = queryMessages(agentId, 0, Date.now() + 1000);
+    expect(result.messages.length).toBe(1);
+    // Both realtime and migration sessionKeys resolve to the same logical key
+    expect(result.sessionCount).toBe(1);
+  });
+
+  it("resolves sessionId found in usageFamilySessionIds", async () => {
+    const agentId = "test-family";
+    const currentSessionId = "bbbb1111-2222-3333-4444-bbbb11112222";
+    const oldSessionId = "cccc1111-2222-3333-4444-cccc11112222";
+    const logicalKey = `agent:${agentId}:feishu:direct:ou_family`;
+
+    writeSessionsJson(agentId, {
+      [logicalKey]: { sessionId: currentSessionId, usageFamilySessionIds: [oldSessionId] },
+    });
+
+    // Write old session file — should map to the same logical key
+    writeSessionFile(
+      agentId,
+      `${oldSessionId}.jsonl`,
+      [makeLine("fam1", "user", "from old session")],
+    );
+    // Write current session file — should also map to the same logical key
+    writeSessionFile(
+      agentId,
+      `${currentSessionId}.jsonl`,
+      [makeLine("fam2", "user", "from current session")],
+    );
+
+    await migrateExistingSessions();
+
+    const result = queryMessages(agentId, 0, Date.now() + 1000);
+    expect(result.messages.length).toBe(2);
+    expect(result.sessionCount).toBe(1); // Both under the same logical sessionKey
+  });
+
+  it("uses empty sessionKey when sessionId not found in sessions.json", async () => {
+    const agentId = "test-unmapped";
+    const sessionId = "dddd1111-2222-3333-4444-dddd11112222";
+
+    // No sessions.json written for this agent
+
+    writeSessionFile(
+      agentId,
+      `${sessionId}.jsonl`,
+      [makeLine("unm1", "user", "unmapped session")],
+    );
+
+    await migrateExistingSessions();
+
+    const result = queryMessages(agentId, 0, Date.now() + 1000);
+    expect(result.messages.length).toBe(1);
+    // Message stored with empty sessionKey — UNIQUE(agentId, entryId) still works
+  });
+
+  it("dedupes between real-time capture (logical key) and migration (mapped from sessionId)", async () => {
+    const agentId = "test-dedup-lookup";
+    const sessionId = "eeee1111-2222-3333-4444-eeee11112222";
+    const logicalKey = `agent:${agentId}:feishu:direct:ou_dedup`;
+
+    writeSessionsJson(agentId, {
+      [logicalKey]: { sessionId },
+    });
+
+    // Simulate real-time capture (already inserted with logical key)
+    insertCapturedMessage(agentId, logicalKey, "dedup-1", Date.now(), "user", {
+      role: "user",
+      content: "from real-time",
+    });
+
+    // Simulate migration (same entryId, should be ignored)
+    writeSessionFile(
+      agentId,
+      `${sessionId}.jsonl`,
+      [makeLine("dedup-1", "user", "from migration")],
+    );
+
+    await migrateExistingSessions();
+
+    const result = queryMessages(agentId, 0, Date.now() + 1000);
+    expect(result.messages.length).toBe(1);
+  });
+
+  it("buildAllAgentSessionKeyMaps reads sessions.json for all agents", async () => {
+    const agentId = "test-build-maps";
+    const sessionId = "ffff1111-2222-3333-4444-ffff11112222";
+    const logicalKey = `agent:${agentId}:feishu:direct:ou_maps`;
+
+    writeSessionsJson(agentId, {
+      [logicalKey]: { sessionId },
+    });
+
+    const maps = await buildAllAgentSessionKeyMaps();
+    const agentMap = maps.get(agentId);
+    expect(agentMap).toBeDefined();
+    expect(agentMap!.get(sessionId)).toBe(logicalKey);
   });
 });

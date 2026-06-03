@@ -63,12 +63,18 @@ describe("agent-source-memory", () => {
       expect(result.messages.length).toBe(3);
     });
 
-    it("deduplicates on (agentId, sessionKey, entryId)", () => {
+    it("deduplicates on (agentId, entryId) regardless of sessionKey", () => {
       const now = Date.now();
-      // Insert same data again (same entryIds)
-      const count = batchInsert("batch-agent", "agent:batch-agent:session1", [
+      // Insert with one sessionKey
+      batchInsert("batch-agent", "agent:batch-agent:session1", [
         { entryId: "e1", ts: now, role: "user", msg: { role: "user", content: "q1" } },
         { entryId: "e2", ts: now + 1000, role: "assistant", msg: { role: "assistant", content: "a1" } },
+        { entryId: "e3", ts: now + 2000, role: "user", msg: { role: "user", content: "q2" } },
+      ]);
+      // Same entryIds, different sessionKey — should be ignored by UNIQUE(agentId, entryId)
+      const count = batchInsert("batch-agent", "agent:batch-agent:different-key", [
+        { entryId: "e1", ts: now, role: "user", msg: { role: "user", content: "q1 dup" } },
+        { entryId: "e2", ts: now + 1000, role: "assistant", msg: { role: "assistant", content: "a1 dup" } },
       ]);
       expect(count).toBe(0); // All duplicates, ignored
 

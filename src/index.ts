@@ -10,8 +10,8 @@ import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/p
 import { toolPluginMetadataSymbol } from "openclaw/plugin-sdk/tool-plugin";
 import { jsonResult } from "openclaw/plugin-sdk/agent-runtime";
 import { queryAgentMessages } from "./queries.js";
-import { initDb, insertCapturedMessage, finalizeSession, closeDb, resolveDbPath } from "./db.js";
-import { migrateExistingSessions } from "./migrate.js";
+import { initDb, insertCapturedMessage, finalizeSession, closeDb, resolveDbPath, deduplicateExistingData } from "./db.js";
+import { migrateExistingSessions, buildAllAgentSessionKeyMaps } from "./migrate.js";
 import { stripCheckpointSuffix } from "./transcript-filenames.js";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import path from "node:path";
@@ -211,6 +211,13 @@ const entry = definePluginEntry({
     api.on("gateway_start", async () => {
       try {
         initDb(resolveDbPath());
+
+        // Build session maps from sessions.json for dedup + migration
+        const agentSessionKeyMaps = await buildAllAgentSessionKeyMaps();
+
+        // Fix existing data: update migration-style sessionKeys to logical ones
+        // and consolidate the sessions table.
+        deduplicateExistingData(agentSessionKeyMaps);
 
         // Use api.runtime.events — the correct injection path that shares
         // the same module instance as internal emitSessionTranscriptUpdate.
