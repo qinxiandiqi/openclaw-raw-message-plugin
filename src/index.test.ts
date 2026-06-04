@@ -5,10 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-source-memory-test-"));
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "raw-message-test-"));
 const dbPath = path.join(tmpDir, "test.db");
 
-describe("agent-source-memory", () => {
+describe("raw-message", () => {
   beforeAll(() => {
     initDb(dbPath);
   });

@@ -1,5 +1,5 @@
 {
-  "name": "openclaw-plugin-agent-source-memory",
+  "name": "openclaw-raw-message-plugin",
   "version": "0.1.0",
   "type": "module",
   "private": true,

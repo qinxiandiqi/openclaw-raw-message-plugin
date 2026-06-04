@@ -1,5 +1,5 @@
 /**
- * Session migration for agent-source-memory (SQLite-based)
+ * Session migration for raw-message plugin (SQLite-based)
  *
  * Scans existing session .jsonl files and imports them into SQLite.
  * Runs incrementally on gateway_start.

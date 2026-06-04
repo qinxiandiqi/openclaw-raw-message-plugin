@@ -1,4 +1,4 @@
-# Agent Source Memory
+# Openclaw Raw Message Plugin
 
 OpenClaw 插件，实时捕获 agent 对话记录并存入 SQLite，提供按 agent + 时间范围的查询工具。
 
@@ -10,7 +10,7 @@ OpenClaw 插件，实时捕获 agent 对话记录并存入 SQLite，提供按 ag
 
 ### 历史迁移
 
-Gateway 启动时自动扫描所有 session 文件（包括归档文件），批量导入已有记录。重复数据通过 `UNIQUE(agentId, sessionKey, entryId)` 自动跳过。
+Gateway 启动时自动扫描所有 session 文件（包括归档文件），批量导入已有记录。重复数据通过 `UNIQUE(agentId, entryId)` 自动跳过。
 
 **扫描的文件类型**：
 - `{id}.jsonl` — 活跃 session
@@ -20,7 +20,9 @@ Gateway 启动时自动扫描所有 session 文件（包括归档文件），批
 
 ## 数据存储
 
-SQLite 数据库位于 `~/.openclaw/agent-source-memory/source-memory.db`。
+SQLite 数据库位于 `~/.openclaw/raw-message/source-memory.db`。
+
+**从旧版迁移**：若 `~/.openclaw/agent-source-memory/` 存在而新目录不存在，启动时会自动重命名。
 
 **Schema**：
 ```sql
@@ -32,7 +34,7 @@ CREATE TABLE messages (
   ts INTEGER NOT NULL,         -- Unix 毫秒时间戳
   role TEXT NOT NULL,           -- user / assistant / toolResult
   msg TEXT NOT NULL,            -- JSON 序列化的完整消息
-  UNIQUE(agentId, sessionKey, entryId)
+  UNIQUE(agentId, entryId)
 );
 ```
 
@@ -81,7 +83,7 @@ pnpm plugin:build   # 编译 + 打包插件
 ## 安装
 
 ```bash
-openclaw plugins install ./path/to/agent-source-memory
+openclaw plugins install ./path/to/openclaw-raw-message-plugin
 ```
 
 ## 依赖

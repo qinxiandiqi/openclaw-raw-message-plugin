@@ -1,5 +1,5 @@
 /**
- * Agent Source Memory Plugin (SQLite-based)
+ * Raw Message Plugin (SQLite-based)
  *
  * Captures agent session messages via api.runtime.events.onSessionTranscriptUpdate
  * and provides time-range query via SQLite.
@@ -131,8 +131,8 @@ const queryAgentMessagesToJsonlTool = {
 };
 
 const metadata = {
-  id: "agent-source-memory",
-  name: "Agent Source Memory",
+  id: "raw-message",
+  name: "Openclaw Raw Message Plugin",
   description: "Capture and query agent session messages in real-time",
   activation: { onStartup: true },
   configSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -203,8 +203,8 @@ function resolveMessageTimestamp(message: unknown): number | undefined {
 let unsubscribe: (() => void) | null = null;
 
 const entry = definePluginEntry({
-  id: "agent-source-memory",
-  name: "Agent Source Memory",
+  id: "raw-message",
+  name: "Openclaw Raw Message Plugin",
   description: "Capture and query agent session messages in real-time",
   register(api: OpenClawPluginApi) {
     // Initialize DB and register listener on gateway start
@@ -254,10 +254,10 @@ const entry = definePluginEntry({
         // Migrate existing sessions (duplicates skipped via INSERT OR IGNORE on entryId)
         const count = await migrateExistingSessions();
         if (count > 0) {
-          console.log(`[agent-source-memory] Migrated ${count} session files`);
+          console.log(`[raw-message] Migrated ${count} session files`);
         }
       } catch (err) {
-        console.error("[agent-source-memory] Init/migration failed:", err);
+        console.error("[raw-message] Init/migration failed:", err);
       }
     });
 

@@ -1,5 +1,5 @@
 /**
- * SQLite database layer for agent-source-memory.
+ * SQLite database layer for raw-message plugin.
  *
  * Provides entryId-keyed writes for both real-time capture
  * (via onSessionTranscriptUpdate) and migration scanning,
@@ -16,7 +16,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 
-const PLUGIN_DATA_DIR = "agent-source-memory";
+const PLUGIN_DATA_DIR = "raw-message";
+const LEGACY_DATA_DIR = "agent-source-memory";
 const DB_FILENAME = "source-memory.db";
 
 /** Schema v2: UNIQUE(agentId, entryId) instead of (agentId, sessionKey, entryId). */
@@ -52,9 +53,24 @@ let upsertSessionStmt: Database.Statement | null = null;
 let finalizeSessionStmt: Database.Statement | null = null;
 
 export function resolveDbPath(): string {
-  const dir = path.join(resolveStateDir(), PLUGIN_DATA_DIR);
-  fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, DB_FILENAME);
+  const stateDir = resolveStateDir();
+  const newDir = path.join(stateDir, PLUGIN_DATA_DIR);
+  const legacyDir = path.join(stateDir, LEGACY_DATA_DIR);
+
+  // Auto-migrate: if new dir doesn't exist but legacy dir does, rename it
+  if (!fs.existsSync(newDir) && fs.existsSync(legacyDir)) {
+    try {
+      fs.renameSync(legacyDir, newDir);
+      console.log(`[raw-message] Migrated data directory: ${legacyDir} → ${newDir}`);
+    } catch (err) {
+      // Rename failed (e.g. cross-device link) — fall back to using legacy dir
+      console.warn(`[raw-message] Could not rename ${legacyDir} → ${newDir}:`, err);
+      fs.mkdirSync(newDir, { recursive: true });
+    }
+  }
+
+  fs.mkdirSync(newDir, { recursive: true });
+  return path.join(newDir, DB_FILENAME);
 }
 
 /**
@@ -90,7 +106,7 @@ function needsSchemaMigration(db: Database.Database): boolean {
  */
 function migrateSchemaV2(db: Database.Database): void {
   console.log(
-    "[agent-source-memory] Migrating schema to v2 (UNIQUE(agentId, entryId))...",
+    "[raw-message] Migrating schema to v2 (UNIQUE(agentId, entryId))...",
   );
 
   db.exec(`
@@ -131,7 +147,7 @@ function migrateSchemaV2(db: Database.Database): void {
     ALTER TABLE sessions_v2 RENAME TO sessions;
   `);
 
-  console.log("[agent-source-memory] Schema migration to v2 complete.");
+  console.log("[raw-message] Schema migration to v2 complete.");
 }
 
 export function initDb(dbPath?: string): void {

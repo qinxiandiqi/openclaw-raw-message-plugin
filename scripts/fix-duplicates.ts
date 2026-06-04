@@ -8,7 +8,7 @@ import path from "node:path";
 
 const dbPath = path.join(
   process.env.HOME!,
-  ".openclaw/agent-source-memory/source-memory.db",
+  ".openclaw/raw-message/source-memory.db",
 );
 
 console.log(`Database: ${dbPath}`);

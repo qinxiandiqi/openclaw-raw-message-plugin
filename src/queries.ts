@@ -1,5 +1,5 @@
 /**
- * Query logic for agent-source-memory (SQLite-based).
+ * Query logic for raw-message plugin (SQLite-based).
  */
 
 import { queryMessages } from "./db.js";

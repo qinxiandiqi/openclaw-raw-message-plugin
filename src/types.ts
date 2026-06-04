@@ -1,5 +1,5 @@
 /**
- * Type definitions for agent-source-memory plugin (SQLite-based)
+ * Type definitions for raw-message plugin (SQLite-based)
  */
 
 export interface CapturedMessage {

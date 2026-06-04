@@ -14,7 +14,7 @@ import os from "node:os";
 import { initDb, queryMessages, closeDb, insertCapturedMessage } from "./db.js";
 import { migrateExistingSessions, buildAllAgentSessionKeyMaps } from "./migrate.js";
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-source-memory-migrate-"));
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "raw-message-migrate-"));
 const originalStateDir = process.env.OPENCLAW_STATE_DIR;
 
 function writeSessionFile(agentId: string, filename: string, lines: string[]): void {

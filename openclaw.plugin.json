@@ -1,6 +1,6 @@
 {
-  "id": "agent-source-memory",
-  "name": "Agent Source Memory",
+  "id": "raw-message",
+  "name": "Openclaw Raw Message Plugin",
   "description": "Capture and query agent session messages in real-time",
   "version": "0.1.0",
   "configSchema": {
