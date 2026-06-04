@@ -2,9 +2,28 @@
   "name": "openclaw-raw-message-plugin",
   "version": "0.1.0",
   "type": "module",
-  "private": true,
+  "private": false,
+  "description": "OpenClaw plugin to capture and query agent session messages in real-time via SQLite",
+  "license": "MIT",
+  "author": "Jianan <qinxiandiqi@foxmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qinxiandiqi/openclaw-raw-message-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/qinxiandiqi/openclaw-raw-message-plugin/issues"
+  },
+  "homepage": "https://github.com/qinxiandiqi/openclaw-raw-message-plugin#readme",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "memory",
+    "sqlite",
+    "message-capture"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "pnpm run build",
     "plugin:build": "pnpm run build && openclaw plugins build --entry ./dist/index.js",
     "plugin:validate": "pnpm run build && openclaw plugins validate --entry ./dist/index.js",
     "test": "vitest run"

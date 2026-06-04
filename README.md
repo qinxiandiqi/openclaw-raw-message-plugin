@@ -2,6 +2,19 @@
 
 OpenClaw 插件，实时捕获 agent 对话记录并存入 SQLite，提供按 agent + 时间范围的查询工具。
 
+## 安装
+
+```bash
+# 从 GitHub 安装（推荐）
+openclaw plugins install github:qinxiandiqi/openclaw-raw-message-plugin
+
+# 或从 npm 安装
+openclaw plugins install openclaw-raw-message-plugin
+
+# 或从本地路径安装
+openclaw plugins install ./path/to/openclaw-raw-message-plugin
+```
+
 ## 工作原理
 
 ### 数据捕获
@@ -71,7 +84,7 @@ startTime: 1779379200000  // 2026-05-22 00:00:00 CST
 endTime:   1779465600000  // 2026-05-23 00:00:00 CST
 ```
 
-## 构建
+## 开发
 
 ```bash
 pnpm install
@@ -80,14 +93,12 @@ pnpm test           # 运行测试
 pnpm plugin:build   # 编译 + 打包插件
 ```
 
-## 安装
-
-```bash
-openclaw plugins install ./path/to/openclaw-raw-message-plugin
-```
-
 ## 依赖
 
 - `better-sqlite3` — SQLite 存储
 - `typebox` — 工具参数 schema
 - `openclaw` (peer dependency >= 2026.5.17)
+
+## 许可证
+
+[MIT](LICENSE)
