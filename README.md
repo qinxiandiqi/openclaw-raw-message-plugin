@@ -6,7 +6,7 @@ OpenClaw 插件，实时捕获 agent 对话记录并存入 SQLite，提供按 ag
 
 ### 数据捕获
 
-通过 `api.runtime.events.onSessionTranscriptUpdate` 监听消息写入事件，每条消息写入 `.jsonl` 文件后触发。消息内容经过脱敏处理（与文件内容一致），携带 `messageId`（entryId）用于去重。
+通过 `api.runtime.events.onSessionTranscriptUpdate` 监听消息写入事件，每条消息写入 `.jsonl` 文件后触发。消息以原始 JSON 格式完整存储，携带 `messageId`（entryId）用于去重。
 
 ### 历史迁移
 
