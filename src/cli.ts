@@ -88,6 +88,23 @@ function getPlatformCommand(cmd: string): string {
   return process.platform === "win32" ? `${cmd}.cmd` : cmd;
 }
 
+/**
+ * Find better-sqlite3 native binary — npm may hoist it to the top-level
+ * node_modules or keep it nested under the plugin package.
+ */
+function findNativeBinary(pluginDir: string): string | null {
+  const candidates = [
+    // hoisted by npm to top-level node_modules
+    path.join(pluginDir, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node"),
+    // nested inside the plugin package
+    path.join(pluginDir, "node_modules", "openclaw-raw-message-plugin", "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Install command
 // ---------------------------------------------------------------------------
@@ -110,15 +127,21 @@ function installCommand(options: { version?: string }): void {
     log(`Detected OpenClaw ${version}`);
   }
 
-  // 2. Create plugin directory
+  // 2. Clean existing plugin directory
+  //    Remove old install artifacts so npm can install fresh.
+  //    The plugin database at ~/.openclaw/raw-message/ is NOT touched.
+  if (fs.existsSync(PLUGIN_DIR)) {
+    log(`Removing previous installation at ${PLUGIN_DIR}`);
+    fs.rmSync(PLUGIN_DIR, { recursive: true, force: true });
+  }
   fs.mkdirSync(PLUGIN_DIR, { recursive: true });
   log(`Installing to ${PLUGIN_DIR}`);
 
-  // 3. npm init + npm install (WITHOUT --ignore-scripts)
-  //    This lets better-sqlite3's prebuild-install download pre-built binaries.
+  // 3. npm install the plugin package directly into the extension directory.
+  //    This puts openclaw.plugin.json, dist/, etc. at the root level
+  //    so openclaw can discover the plugin correctly.
+  //    We do NOT use --ignore-scripts so better-sqlite3's prebuild-install runs.
   const npmCmd = getPlatformCommand("npm");
-
-  run(npmCmd, ["init", "-y"], { cwd: PLUGIN_DIR });
 
   log(`Installing ${packageSpec} (with native module prebuilds)...`);
   try {
@@ -128,7 +151,6 @@ function installCommand(options: { version?: string }): void {
       "--omit=dev",
       "--no-audit",
       "--no-fund",
-      "--save",
     ], { cwd: PLUGIN_DIR });
   } catch {
     error(
@@ -139,27 +161,60 @@ function installCommand(options: { version?: string }): void {
     );
   }
 
-  // 4. Verify better-sqlite3 native module
-  const nodeModulesDir = path.join(PLUGIN_DIR, "node_modules", PACKAGE_NAME);
-  const dbJs = path.join(nodeModulesDir, "dist", "db.js");
-  if (!fs.existsSync(dbJs)) {
-    error(`Plugin not found at ${nodeModulesDir}. Installation may have failed.`);
+  // 4. Verify installation — openclaw expects openclaw.plugin.json at the root
+  const pluginJson = path.join(PLUGIN_DIR, "openclaw.plugin.json");
+  if (!fs.existsSync(pluginJson)) {
+    // npm install put files in node_modules/<package>/ — copy them up
+    const nestedPkgDir = path.join(PLUGIN_DIR, "node_modules", PACKAGE_NAME);
+    if (!fs.existsSync(nestedPkgDir)) {
+      error(`Plugin package not found. Installation may have failed.`);
+    }
+    log("Copying plugin files to extension root (npm did not install them at root level)...");
+    const entries = fs.readdirSync(nestedPkgDir);
+    for (const entry of entries) {
+      // skip node_modules to avoid recursive copy
+      if (entry === "node_modules") continue;
+      const src = path.join(nestedPkgDir, entry);
+      const dest = path.join(PLUGIN_DIR, entry);
+      fs.cpSync(src, dest, { recursive: true, force: true });
+    }
   }
 
-  // Check native binary
-  const betterSqliteDir = path.join(nodeModulesDir, "node_modules", "better-sqlite3");
-  const buildDir = path.join(betterSqliteDir, "build", "Release");
-  const hasNative = fs.existsSync(path.join(buildDir, "better_sqlite3.node"));
-  if (hasNative) {
-    log("✓ better-sqlite3 native module ready");
+  // Re-verify after potential copy
+  if (!fs.existsSync(pluginJson)) {
+    error(`openclaw.plugin.json not found at ${PLUGIN_DIR}. Installation failed.`);
+  }
+  log("✓ Plugin files in place");
+
+  // 5. Verify better-sqlite3 native module
+  const nativeBinary = findNativeBinary(PLUGIN_DIR);
+  if (nativeBinary) {
+    log(`✓ better-sqlite3 native module ready (${nativeBinary})`);
   } else {
     warn(
-      "better-sqlite3 native binary not found. The plugin may not work.\n" +
-      "  Try: cd " + PLUGIN_DIR + " && npm rebuild better-sqlite3"
+      "better-sqlite3 native binary not found. Attempting rebuild..."
     );
+    try {
+      runInherit(npmCmd, ["rebuild", "better-sqlite3"], { cwd: PLUGIN_DIR });
+      const rebuilt = findNativeBinary(PLUGIN_DIR);
+      if (rebuilt) {
+        log(`✓ better-sqlite3 rebuilt successfully`);
+      } else {
+        warn(
+          "Rebuild did not produce native binary. The plugin may not work.\n" +
+          "  Try: cd " + PLUGIN_DIR + " && npm rebuild better-sqlite3"
+        );
+      }
+    } catch {
+      warn(
+        "better-sqlite3 rebuild failed. The plugin may not work.\n" +
+        "  macOS: xcode-select --install\n" +
+        "  Linux: sudo apt install build-essential python3"
+      );
+    }
   }
 
-  // 5. Update openclaw.json
+  // 6. Update openclaw.json
   const config = readConfig();
 
   if (!config.plugins) config.plugins = {};
@@ -174,7 +229,7 @@ function installCommand(options: { version?: string }): void {
   writeConfig(config);
   log("✓ Updated openclaw.json");
 
-  // 6. Restart gateway
+  // 7. Restart gateway
   log("Restarting OpenClaw gateway...");
   try {
     runInherit(getPlatformCommand("openclaw"), ["gateway", "restart"]);
@@ -183,7 +238,7 @@ function installCommand(options: { version?: string }): void {
     return;
   }
 
-  // 7. Health check
+  // 8. Health check
   log("Waiting for gateway to start...");
   let healthy = false;
   for (let i = 0; i < 10; i++) {
@@ -212,6 +267,70 @@ function installCommand(options: { version?: string }): void {
 }
 
 // ---------------------------------------------------------------------------
+// Uninstall command
+// ---------------------------------------------------------------------------
+
+function uninstallCommand(options: { keepData?: boolean }): void {
+  const PLUGIN_ID = "raw-message";
+  const EXTENSIONS_DIR = getExtensionsDir();
+  const PLUGIN_DIR = path.join(EXTENSIONS_DIR, PLUGIN_ID);
+  const DATA_DIR = path.join(getOpenClawDir(), PLUGIN_ID);
+
+  // 1. Remove extension directory
+  if (fs.existsSync(PLUGIN_DIR)) {
+    log(`Removing plugin from ${PLUGIN_DIR}`);
+    fs.rmSync(PLUGIN_DIR, { recursive: true, force: true });
+    log("✓ Plugin files removed");
+  } else {
+    warn("Plugin directory not found. Already uninstalled?");
+  }
+
+  // 2. Optionally remove plugin data (database)
+  if (!options.keepData && fs.existsSync(DATA_DIR)) {
+    log(`Removing plugin data from ${DATA_DIR}`);
+    fs.rmSync(DATA_DIR, { recursive: true, force: true });
+    log("✓ Plugin data removed");
+  } else if (options.keepData && fs.existsSync(DATA_DIR)) {
+    log(`Keeping plugin data at ${DATA_DIR}`);
+  }
+
+  // 3. Update openclaw.json — remove plugin entries
+  const config = readConfig();
+  let configChanged = false;
+
+  if (config.plugins?.allow) {
+    const idx = config.plugins.allow.indexOf(PLUGIN_ID);
+    if (idx !== -1) {
+      config.plugins.allow.splice(idx, 1);
+      configChanged = true;
+    }
+  }
+
+  if (config.plugins?.entries?.[PLUGIN_ID]) {
+    delete config.plugins.entries[PLUGIN_ID];
+    configChanged = true;
+  }
+
+  if (configChanged) {
+    writeConfig(config);
+    log("✓ Removed plugin from openclaw.json");
+  } else {
+    log("Plugin not found in openclaw.json (already removed)");
+  }
+
+  // 4. Restart gateway
+  log("Restarting OpenClaw gateway...");
+  try {
+    runInherit(getPlatformCommand("openclaw"), ["gateway", "restart"]);
+  } catch {
+    warn("Could not restart gateway automatically. Please restart manually: openclaw gateway restart");
+    return;
+  }
+
+  log("✓ Plugin uninstalled successfully");
+}
+
+// ---------------------------------------------------------------------------
 // CLI parsing
 // ---------------------------------------------------------------------------
 
@@ -223,13 +342,15 @@ if (!command || command === "help" || command === "--help" || command === "-h") 
 openclaw-raw-message-plugin — one-command installer
 
 Usage:
-  npx openclaw-raw-message-plugin install [options]
+  npx openclaw-raw-message-plugin <command> [options]
 
 Commands:
-  install    Install the plugin into OpenClaw
+  install      Install the plugin into OpenClaw
+  uninstall    Uninstall the plugin from OpenClaw
 
 Options:
   --version <ver>    Install a specific version (default: latest)
+  --keep-data       Uninstall only; keep plugin database
   -h, --help         Show this help
 `);
   process.exit(0);
@@ -242,6 +363,10 @@ if (command === "install") {
     opts.version = args[vIdx + 1];
   }
   installCommand(opts);
+} else if (command === "uninstall") {
+  const opts: { keepData?: boolean } = {};
+  opts.keepData = args.includes("--keep-data");
+  uninstallCommand(opts);
 } else {
   error(`Unknown command: ${command}. Run with --help for usage.`);
 }
