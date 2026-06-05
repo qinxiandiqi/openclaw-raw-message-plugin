@@ -21,7 +21,7 @@ npx openclaw-raw-message-plugin install
 指定版本安装：
 
 ```bash
-npx openclaw-raw-message-plugin install --version 0.4.0
+npx openclaw-raw-message-plugin install --version 0.6.0
 ```
 
 ### 方式二：openclaw plugins install
@@ -115,6 +115,42 @@ CREATE TABLE messages (
 agentId: "main"
 startTime: 1779379200000  // 2026-05-22 00:00:00 CST
 endTime:   1779465600000  // 2026-05-23 00:00:00 CST
+```
+
+## 工具：query_agent_messages_to_jsonl
+
+`query_agent_messages` 的便捷版本：直接将查询结果写入 JSONL 文件并返回文件路径，避免在上下文窗口中塞入大量消息。
+
+**参数**：
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| agentId | string | 是 | Agent ID（如 `"main"`） |
+| startTime | number | 是 | 起始时间（Unix 毫秒时间戳） |
+| endTime | number | 是 | 结束时间（Unix 毫秒时间戳） |
+| outputPath | string | 是 | 输出文件的绝对路径（父目录不存在会自动创建，已有文件会被覆盖） |
+
+**返回**：
+```json
+{
+  "filePath": "/tmp/messages.jsonl",
+  "sessionCount": 3,
+  "messageCount": 127
+}
+```
+
+JSONL 文件每行一个 JSON 对象，格式为：
+```json
+{"type": "message", "id": "entryId", "timestamp": "2026-05-27T08:00:00.000+08:00", "message": {"role": "user", "content": "..."}}
+```
+
+`timestamp` 是本地时区的 ISO 8601 字符串，可直接阅读无需时区转换。
+
+**使用示例**：
+```
+agentId: "main"
+startTime: 1779379200000
+endTime:   1779465600000
+outputPath: "/tmp/messages.jsonl"
 ```
 
 ## 开发
