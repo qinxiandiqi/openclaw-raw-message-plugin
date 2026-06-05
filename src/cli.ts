@@ -225,6 +225,8 @@ function installCommand(options: { version?: string }): void {
   //    This puts openclaw.plugin.json, dist/, etc. at the root level
   //    so openclaw can discover the plugin correctly.
   //    We do NOT use --ignore-scripts so better-sqlite3's prebuild-install runs.
+  //    Use a temp cache to avoid stale prebuilt binaries from a different Node version.
+  const tmpCache = path.join(os.tmpdir(), `openclaw-plugin-install-${Date.now()}`);
   log(`Installing ${packageSpec} (with native module prebuilds)...`);
   try {
     runInherit(installNpm, [
@@ -233,6 +235,7 @@ function installCommand(options: { version?: string }): void {
       "--omit=dev",
       "--no-audit",
       "--no-fund",
+      "--cache", tmpCache,
     ], { cwd: PLUGIN_DIR });
   } catch {
     error(
@@ -242,6 +245,8 @@ function installCommand(options: { version?: string }): void {
       "  Linux: sudo apt install build-essential python3"
     );
   }
+  // Clean up temp cache
+  try { fs.rmSync(tmpCache, { recursive: true, force: true }); } catch {}
 
   // 5. Verify installation — openclaw expects openclaw.plugin.json at the root
   const pluginJson = path.join(PLUGIN_DIR, "openclaw.plugin.json");
