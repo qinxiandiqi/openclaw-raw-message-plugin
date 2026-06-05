@@ -89,6 +89,65 @@ function getPlatformCommand(cmd: string): string {
 }
 
 /**
+ * Detect the Node.js binary that openclaw gateway actually uses.
+ * The gateway may run on a different Node version than the current shell
+ * (e.g. shell via hermes v22, gateway via nvm v24).
+ * We read the LaunchAgent plist or fall back to `openclaw` path resolution.
+ */
+function getGatewayNodePath(): string | null {
+  // 1. Try reading the LaunchAgent plist (macOS)
+  const plistNames = ["ai.openclaw.gateway.plist", "com.openclaw.gateway.plist"];
+  const launchAgentsDir = path.join(os.homedir(), "Library", "LaunchAgents");
+  for (const name of plistNames) {
+    const plistPath = path.join(launchAgentsDir, name);
+    if (fs.existsSync(plistPath)) {
+      const content = fs.readFileSync(plistPath, "utf-8");
+      // Look for <string>/path/to/node</string> in ProgramArguments
+      const lines = content.split("\n").map((l) => l.trim());
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes("ProgramArguments")) {
+          // Scan next ~20 lines for a node path
+          for (let j = i; j < Math.min(i + 25, lines.length); j++) {
+            const m = lines[j].match(/<string>(.*\/node)<\/string>/);
+            if (m && !m[1].endsWith("/env/node")) return m[1];
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Try service-env wrapper
+  const envWrapper = path.join(os.homedir(), ".openclaw", "service-env", "ai.openclaw.gateway-env-wrapper.sh");
+  if (fs.existsSync(envWrapper)) {
+    const envFile = path.join(os.homedir(), ".openclaw", "service-env", "ai.openclaw.gateway.env");
+    if (fs.existsSync(envFile)) {
+      const content = fs.readFileSync(envFile, "utf-8");
+      const m = content.match(/PATH="?([^":\n]*?)(?::"?|$)/);
+      if (m) {
+        const dir = m[1].trim();
+        const nodePath = path.join(dir, "node");
+        if (fs.existsSync(nodePath)) return nodePath;
+      }
+    }
+  }
+
+  // 3. Try resolving from openclaw binary location
+  try {
+    const openclawPath = run("which", ["openclaw"]);
+    // openclaw might be a symlink — resolve it
+    let realPath = openclawPath;
+    try { realPath = fs.realpathSync(openclawPath); } catch {}
+    // Typically: .../nvm/versions/node/vXX/bin/openclaw
+    // The node binary is in the same bin/ directory
+    const binDir = path.dirname(realPath);
+    const nodePath = path.join(binDir, "node");
+    if (fs.existsSync(nodePath)) return nodePath;
+  } catch {}
+
+  return null;
+}
+
+/**
  * Find better-sqlite3 native binary — npm may hoist it to the top-level
  * node_modules or keep it nested under the plugin package.
  */
@@ -186,31 +245,72 @@ function installCommand(options: { version?: string }): void {
   }
   log("✓ Plugin files in place");
 
-  // 5. Verify better-sqlite3 native module
-  const nativeBinary = findNativeBinary(PLUGIN_DIR);
-  if (nativeBinary) {
-    log(`✓ better-sqlite3 native module ready (${nativeBinary})`);
-  } else {
-    warn(
-      "better-sqlite3 native binary not found. Attempting rebuild..."
-    );
+  // 5. Rebuild better-sqlite3 with the gateway's Node.js version.
+  //    The current shell may use a different Node version (e.g. hermes v22)
+  //    than the openclaw gateway (e.g. nvm v24). Native modules must match
+  //    the Node that actually loads them.
+  const gatewayNode = getGatewayNodePath();
+  const shellNodeVersion = process.versions.node;
+
+  if (gatewayNode && gatewayNode !== process.execPath) {
+    log(`Shell Node: v${shellNodeVersion} (${process.execPath})`);
     try {
-      runInherit(npmCmd, ["rebuild", "better-sqlite3"], { cwd: PLUGIN_DIR });
-      const rebuilt = findNativeBinary(PLUGIN_DIR);
-      if (rebuilt) {
-        log(`✓ better-sqlite3 rebuilt successfully`);
+      const gwVersion = run(gatewayNode, ["--version"]).trim();
+      log(`Gateway Node: ${gwVersion} (${gatewayNode})`);
+    } catch {}
+    log("Rebuilding better-sqlite3 for gateway's Node version...");
+    try {
+      // Use gateway's node to run npm rebuild
+      const gatewayBinDir = path.dirname(gatewayNode);
+      const gatewayNpm = path.join(gatewayBinDir, getPlatformCommand("npm"));
+      if (fs.existsSync(gatewayNpm)) {
+        runInherit(gatewayNpm, ["rebuild", "better-sqlite3"], { cwd: PLUGIN_DIR });
+        log("✓ better-sqlite3 rebuilt for gateway's Node version");
       } else {
-        warn(
-          "Rebuild did not produce native binary. The plugin may not work.\n" +
-          "  Try: cd " + PLUGIN_DIR + " && npm rebuild better-sqlite3"
-        );
+        // No npm alongside gateway's node — use npx with the correct node
+        runInherit(getPlatformCommand("npx"), [
+          "--node-arg=--experimental-modules",
+          "node-gyp",
+          "rebuild",
+          "--directory=" + path.join(PLUGIN_DIR, "node_modules", "better-sqlite3"),
+        ], { cwd: PLUGIN_DIR, env: { ...process.env, PATH: gatewayBinDir + ":" + process.env.PATH } });
+        log("✓ better-sqlite3 rebuilt for gateway's Node version");
       }
     } catch {
       warn(
-        "better-sqlite3 rebuild failed. The plugin may not work.\n" +
-        "  macOS: xcode-select --install\n" +
-        "  Linux: sudo apt install build-essential python3"
+        "Could not rebuild better-sqlite3 for gateway's Node version.\n" +
+        "  The plugin may not work. Try manually:\n" +
+        "  cd " + PLUGIN_DIR + " && " + gatewayNode + " " +
+        path.join(path.dirname(gatewayNode), "npm") + " rebuild better-sqlite3"
       );
+    }
+  } else {
+    // Same Node version or couldn't detect gateway node — just verify binary exists
+    const nativeBinary = findNativeBinary(PLUGIN_DIR);
+    if (nativeBinary) {
+      log(`✓ better-sqlite3 native module ready`);
+    } else {
+      warn(
+        "better-sqlite3 native binary not found. Attempting rebuild..."
+      );
+      try {
+        runInherit(npmCmd, ["rebuild", "better-sqlite3"], { cwd: PLUGIN_DIR });
+        const rebuilt = findNativeBinary(PLUGIN_DIR);
+        if (rebuilt) {
+          log(`✓ better-sqlite3 rebuilt successfully`);
+        } else {
+          warn(
+            "Rebuild did not produce native binary. The plugin may not work.\n" +
+            "  Try: cd " + PLUGIN_DIR + " && npm rebuild better-sqlite3"
+          );
+        }
+      } catch {
+        warn(
+          "better-sqlite3 rebuild failed. The plugin may not work.\n" +
+          "  macOS: xcode-select --install\n" +
+          "  Linux: sudo apt install build-essential python3"
+        );
+      }
     }
   }
 

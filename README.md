@@ -4,15 +4,48 @@ OpenClaw 插件，实时捕获 agent 对话记录并存入 SQLite，提供按 ag
 
 ## 安装
 
+### 方式一：npx 一键安装（推荐）
+
+`openclaw plugins install` 内部使用 `--ignore-scripts`，会导致 `better-sqlite3` 的原生模块无法编译。npx 安装方式绕过此限制：
+
 ```bash
-# 从 GitHub 安装（推荐）
-openclaw plugins install github:qinxiandiqi/openclaw-raw-message-plugin
+npx openclaw-raw-message-plugin install
+```
 
-# 或从 npm 安装
+安装脚本会自动：
+- 在 `~/.openclaw/extensions/raw-message/` 下安装插件
+- 检测 openclaw gateway 使用的 Node.js 版本，用对应版本编译 `better-sqlite3` 原生模块
+- 更新 `openclaw.json` 配置
+- 重启 gateway 并进行健康检查
+
+指定版本安装：
+
+```bash
+npx openclaw-raw-message-plugin install --version 0.4.0
+```
+
+### 方式二：openclaw plugins install
+
+> ⚠️ 此方式可能导致 `better-sqlite3` 原生模块缺失，插件无法正常工作。
+
+```bash
 openclaw plugins install openclaw-raw-message-plugin
+```
 
-# 或从本地路径安装
+### 方式三：本地安装
+
+```bash
 openclaw plugins install ./path/to/openclaw-raw-message-plugin
+```
+
+## 卸载
+
+```bash
+# 卸载插件，同时删除数据库
+npx openclaw-raw-message-plugin uninstall
+
+# 卸载插件，保留数据库
+npx openclaw-raw-message-plugin uninstall --keep-data
 ```
 
 ## 工作原理
