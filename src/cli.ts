@@ -196,15 +196,38 @@ function installCommand(options: { version?: string }): void {
   fs.mkdirSync(PLUGIN_DIR, { recursive: true });
   log(`Installing to ${PLUGIN_DIR}`);
 
-  // 3. npm install the plugin package directly into the extension directory.
+  // 3. Determine which Node/npm to use for installation.
+  //    The shell may use a different Node version (e.g. hermes v22)
+  //    than the openclaw gateway (e.g. nvm v24). Native modules must be
+  //    compiled for the Node that actually loads them, so we install using
+  //    the gateway's Node/npm when available. This lets prebuild-install
+  //    download the correct prebuilt binary for the gateway's Node version.
+  const gatewayNode = getGatewayNodePath();
+  let installNpm = getPlatformCommand("npm");
+
+  if (gatewayNode && gatewayNode !== process.execPath) {
+    log(`Shell Node: v${process.versions.node} (${process.execPath})`);
+    try {
+      const gwVersion = run(gatewayNode, ["--version"]).trim();
+      log(`Gateway Node: ${gwVersion} (${gatewayNode})`);
+    } catch {}
+    const gatewayBinDir = path.dirname(gatewayNode);
+    const gatewayNpm = path.join(gatewayBinDir, getPlatformCommand("npm"));
+    if (fs.existsSync(gatewayNpm)) {
+      installNpm = gatewayNpm;
+      log(`Using gateway's npm for installation`);
+    } else {
+      warn("Gateway's npm not found, using shell's npm (native module may not match)");
+    }
+  }
+
+  // 4. npm install the plugin package directly into the extension directory.
   //    This puts openclaw.plugin.json, dist/, etc. at the root level
   //    so openclaw can discover the plugin correctly.
   //    We do NOT use --ignore-scripts so better-sqlite3's prebuild-install runs.
-  const npmCmd = getPlatformCommand("npm");
-
   log(`Installing ${packageSpec} (with native module prebuilds)...`);
   try {
-    runInherit(npmCmd, [
+    runInherit(installNpm, [
       "install",
       packageSpec,
       "--omit=dev",
@@ -220,7 +243,7 @@ function installCommand(options: { version?: string }): void {
     );
   }
 
-  // 4. Verify installation — openclaw expects openclaw.plugin.json at the root
+  // 5. Verify installation — openclaw expects openclaw.plugin.json at the root
   const pluginJson = path.join(PLUGIN_DIR, "openclaw.plugin.json");
   if (!fs.existsSync(pluginJson)) {
     // npm install put files in node_modules/<package>/ — copy them up
@@ -245,76 +268,18 @@ function installCommand(options: { version?: string }): void {
   }
   log("✓ Plugin files in place");
 
-  // 5. Rebuild better-sqlite3 with the gateway's Node.js version.
-  //    The current shell may use a different Node version (e.g. hermes v22)
-  //    than the openclaw gateway (e.g. nvm v24). Native modules must match
-  //    the Node that actually loads them.
-  const gatewayNode = getGatewayNodePath();
-  const shellNodeVersion = process.versions.node;
-
-  if (gatewayNode && gatewayNode !== process.execPath) {
-    log(`Shell Node: v${shellNodeVersion} (${process.execPath})`);
-    try {
-      const gwVersion = run(gatewayNode, ["--version"]).trim();
-      log(`Gateway Node: ${gwVersion} (${gatewayNode})`);
-    } catch {}
-    log("Rebuilding better-sqlite3 for gateway's Node version...");
-    try {
-      // Use gateway's node to run npm rebuild
-      const gatewayBinDir = path.dirname(gatewayNode);
-      const gatewayNpm = path.join(gatewayBinDir, getPlatformCommand("npm"));
-      if (fs.existsSync(gatewayNpm)) {
-        runInherit(gatewayNpm, ["rebuild", "better-sqlite3"], { cwd: PLUGIN_DIR });
-        log("✓ better-sqlite3 rebuilt for gateway's Node version");
-      } else {
-        // No npm alongside gateway's node — use npx with the correct node
-        runInherit(getPlatformCommand("npx"), [
-          "--node-arg=--experimental-modules",
-          "node-gyp",
-          "rebuild",
-          "--directory=" + path.join(PLUGIN_DIR, "node_modules", "better-sqlite3"),
-        ], { cwd: PLUGIN_DIR, env: { ...process.env, PATH: gatewayBinDir + ":" + process.env.PATH } });
-        log("✓ better-sqlite3 rebuilt for gateway's Node version");
-      }
-    } catch {
-      warn(
-        "Could not rebuild better-sqlite3 for gateway's Node version.\n" +
-        "  The plugin may not work. Try manually:\n" +
-        "  cd " + PLUGIN_DIR + " && " + gatewayNode + " " +
-        path.join(path.dirname(gatewayNode), "npm") + " rebuild better-sqlite3"
-      );
-    }
+  // 6. Verify better-sqlite3 native module
+  const nativeBinary = findNativeBinary(PLUGIN_DIR);
+  if (nativeBinary) {
+    log(`✓ better-sqlite3 native module ready`);
   } else {
-    // Same Node version or couldn't detect gateway node — just verify binary exists
-    const nativeBinary = findNativeBinary(PLUGIN_DIR);
-    if (nativeBinary) {
-      log(`✓ better-sqlite3 native module ready`);
-    } else {
-      warn(
-        "better-sqlite3 native binary not found. Attempting rebuild..."
-      );
-      try {
-        runInherit(npmCmd, ["rebuild", "better-sqlite3"], { cwd: PLUGIN_DIR });
-        const rebuilt = findNativeBinary(PLUGIN_DIR);
-        if (rebuilt) {
-          log(`✓ better-sqlite3 rebuilt successfully`);
-        } else {
-          warn(
-            "Rebuild did not produce native binary. The plugin may not work.\n" +
-            "  Try: cd " + PLUGIN_DIR + " && npm rebuild better-sqlite3"
-          );
-        }
-      } catch {
-        warn(
-          "better-sqlite3 rebuild failed. The plugin may not work.\n" +
-          "  macOS: xcode-select --install\n" +
-          "  Linux: sudo apt install build-essential python3"
-        );
-      }
-    }
+    warn(
+      "better-sqlite3 native binary not found. The plugin may not work.\n" +
+      "  Try: cd " + PLUGIN_DIR + " && npm rebuild better-sqlite3"
+    );
   }
 
-  // 6. Update openclaw.json
+  // 7. Update openclaw.json
   const config = readConfig();
 
   if (!config.plugins) config.plugins = {};
@@ -329,7 +294,7 @@ function installCommand(options: { version?: string }): void {
   writeConfig(config);
   log("✓ Updated openclaw.json");
 
-  // 7. Restart gateway
+  // 8. Restart gateway
   log("Restarting OpenClaw gateway...");
   try {
     runInherit(getPlatformCommand("openclaw"), ["gateway", "restart"]);
@@ -338,7 +303,7 @@ function installCommand(options: { version?: string }): void {
     return;
   }
 
-  // 8. Health check
+  // 9. Health check
   log("Waiting for gateway to start...");
   let healthy = false;
   for (let i = 0; i < 10; i++) {
