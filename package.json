@@ -1,6 +1,6 @@
 {
   "name": "openclaw-raw-message-plugin",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "type": "module",
   "private": false,
   "description": "OpenClaw plugin to capture and query agent session messages in real-time via SQLite",

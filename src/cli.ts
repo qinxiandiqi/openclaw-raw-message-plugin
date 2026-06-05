@@ -225,8 +225,17 @@ function installCommand(options: { version?: string }): void {
   //    This puts openclaw.plugin.json, dist/, etc. at the root level
   //    so openclaw can discover the plugin correctly.
   //    We do NOT use --ignore-scripts so better-sqlite3's prebuild-install runs.
-  //    Use a temp cache to avoid stale prebuilt binaries from a different Node version.
-  const tmpCache = path.join(os.tmpdir(), `openclaw-plugin-install-${Date.now()}`);
+  //
+  //    CRITICAL: npm uses `#!/usr/bin/env node` which resolves to whatever
+  //    `node` is first on PATH. If the shell's node (e.g. hermes v22) differs
+  //    from the gateway's node (e.g. nvm v24), prebuild-install will download
+  //    a prebuild for the WRONG node version. We fix this by prepending the
+  //    gateway's node bin directory to PATH so `env node` resolves correctly.
+  let installEnv: Record<string, string> | undefined;
+  if (gatewayNode && gatewayNode !== process.execPath) {
+    const gatewayBinDir = path.dirname(gatewayNode);
+    installEnv = { ...process.env as Record<string, string>, PATH: gatewayBinDir + ":" + (process.env.PATH || "") };
+  }
   log(`Installing ${packageSpec} (with native module prebuilds)...`);
   try {
     runInherit(installNpm, [
@@ -235,8 +244,7 @@ function installCommand(options: { version?: string }): void {
       "--omit=dev",
       "--no-audit",
       "--no-fund",
-      "--cache", tmpCache,
-    ], { cwd: PLUGIN_DIR });
+    ], { cwd: PLUGIN_DIR, env: installEnv });
   } catch {
     error(
       "npm install failed. Ensure you have network access and (if prebuild is unavailable) " +
@@ -245,8 +253,6 @@ function installCommand(options: { version?: string }): void {
       "  Linux: sudo apt install build-essential python3"
     );
   }
-  // Clean up temp cache
-  try { fs.rmSync(tmpCache, { recursive: true, force: true }); } catch {}
 
   // 5. Verify installation — openclaw expects openclaw.plugin.json at the root
   const pluginJson = path.join(PLUGIN_DIR, "openclaw.plugin.json");
